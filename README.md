@@ -58,4 +58,4 @@ A classic PONG arcade game clone with **C++ native** (Windows) and **HTML browse
 ## 📸
 
 ```
-![alt text](image.png)
+![alt](MenuScreenshot.png)
