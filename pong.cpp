@@ -13,6 +13,7 @@
 #include <string>
 #include <fstream>
 #include <algorithm>
+#include <mmsystem.h>
 
 const int GW = 800, GH = 500, PW = 12, BS = 10;
 
@@ -27,7 +28,7 @@ struct Settings {
     std::string p1n = "PLAYER 1", p2n = "COMPUTER";
     int p1c = 0, p2c = 0, bc = 0, sc = 0;
     int bg = 0, sl = 7, tl = 0, bspd = 20, psz = 80, ai = 5, pspd = 8;
-    bool snd = true;
+    bool snd = true, ps = false;
     COLORREF p1C(){return colors[p1c];}
     COLORREF p2C(){return colors[p2c];}
     COLORREF bC(){return colors[bc];}
@@ -49,6 +50,8 @@ struct Bl { float x,y,s,vx,vy; } bl;
 int psz, pspd, bspd;
 bool k[256] = {};
 HWND hw = NULL;
+std::string pointMsg = "";
+int pendingDir = 0;
 
 float rnd(float a, float b) { return a + (float)rand()/RAND_MAX*(b-a); }
 float clf(float v, float lo, float hi) { return std::max(lo, std::min(hi, v)); }
@@ -72,10 +75,23 @@ void rbl(int dir) {
     bl = {GW/2.f-BS/2.f, GH/2.f-BS/2.f, (float)BS, cosf(a)*bspd*d, sinf(a)*bspd};
 }
 
+void rblFrom(int dir) {
+    // Spawn ball at the scored-on player's paddle heading toward the scorer
+    // dir=1  -> spawn at left paddle (heading right)
+    // dir=-1 -> spawn at right paddle (heading left)
+    float a = rnd(-0.4f, 0.4f);
+    if(dir > 0) {
+        bl = {lp.x + lp.w + 1.f, lp.y + lp.h/2.f - BS/2.f, (float)BS, cosf(a)*bspd*dir, sinf(a)*bspd};
+    } else {
+        bl = {rp.x - BS - 1.f, rp.y + rp.h/2.f - BS/2.f, (float)BS, cosf(a)*bspd*dir, sinf(a)*bspd};
+    }
+}
+
 void rgame() {
     if(t1){KillTimer(hw,t1);t1=0;}
     ls=rs=0; apply(); rpdl(); rbl(1);
     if(ss.tl>0){trem=ss.tl;t1=SetTimer(hw,1,1000,NULL);}else trem=0;
+    pointMsg = ""; pendingDir = 0;
     st=PLAY; InvalidateRect(hw,NULL,TRUE);
 }
 
@@ -113,9 +129,16 @@ void upd() {
         bl.vx=-fabsf(cosf(a))*bspd; bl.vy=sinf(a)*bspd;
         bl.x=rp.x-bl.s; sh();
     }
-    if(bl.x+bl.s<0){rs++;ssc();if(rs>=ss.sl){st=GAMEOVER;swin();}else rbl(-1);}
-    if(bl.x>GW){ls++;ssc();if(ls>=ss.sl){st=GAMEOVER;swin();}else rbl(1);}
-    InvalidateRect(hw,NULL,TRUE);
+    if(bl.x+bl.s<0){
+        rs++; ssc();
+        if(ss.ps && rs<ss.sl) { pointMsg = "POINT " + (tp?ss.p2n:"COMPUTER"); pendingDir = -1; st = PAUSED; }
+        if(rs>=ss.sl){st=GAMEOVER;swin();}else if(pendingDir==0) rblFrom(-1);
+    }
+    if(bl.x>GW){
+        ls++; ssc();
+        if(ss.ps && ls<ss.sl) { pointMsg = "POINT " + ss.p1n; pendingDir = 1; st = PAUSED; }
+        if(ls>=ss.sl){st=GAMEOVER;swin();}else if(pendingDir==0) rblFrom(1);
+    }
 }
 
 struct Btn { RECT r; const char* t; };
@@ -182,10 +205,21 @@ void drawGame(HDC dc) {
         DeleteObject(tf);
     }
     if(st==PAUSED){
-        HFONT pf=CreateFontA((int)(20*sc),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,FIXED_PITCH,"Courier New");
-        SelectObject(mdc,pf); SetTextColor(mdc,RGB(255,255,255));
-        TextOutA(mdc,ox+(int)(GW/2*sc)-70,oy+(int)(GH/2*sc),"-- PAUSED --",12);
-        DeleteObject(pf);
+        SetTextColor(mdc,RGB(255,255,255));
+        if(!pointMsg.empty()){
+            HFONT pf=CreateFontA((int)(24*sc),0,0,0,FW_BOLD,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,FIXED_PITCH,"Courier New");
+            SelectObject(mdc,pf); SetTextColor(mdc,RGB(255,255,100));
+            TextOutA(mdc,ox+(int)(GW/2*sc)-(int)(pointMsg.length()*7*sc),oy+(int)(GH/2*sc)-30,pointMsg.c_str(),(int)pointMsg.length());
+            HFONT sf=CreateFontA((int)(14*sc),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,FIXED_PITCH,"Courier New");
+            SelectObject(mdc,sf); SetTextColor(mdc,RGB(200,200,200));
+            TextOutA(mdc,ox+(int)(GW/2*sc)-(int)(17*4.5*sc),oy+(int)(GH/2*sc)+10,"PRESS P TO RESUME",17);
+            DeleteObject(sf); DeleteObject(pf);
+        } else {
+            HFONT pf=CreateFontA((int)(20*sc),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,FIXED_PITCH,"Courier New");
+            SelectObject(mdc,pf); SetTextColor(mdc,RGB(255,255,255));
+            TextOutA(mdc,ox+(int)(GW/2*sc)-70,oy+(int)(GH/2*sc),"-- PAUSED --",12);
+            DeleteObject(pf);
+        }
     }
     BitBlt(dc,0,0,cw,ch,mdc,0,0,SRCCOPY);
 }
@@ -255,13 +289,14 @@ void drawSettings(HDC dc) {
     snprintf(buf,sizeof(buf),"%s  [A]",ss.ai<=3?"EASY":ss.ai<=6?"NORMAL":ss.ai<=9?"HARD":"INSANE"); di(y,"AI DIFFICULTY",buf); y+=stp;
     snprintf(buf,sizeof(buf),"%d  [K]",ss.pspd); di(y,"PADDLE SPEED",buf); y+=stp;
     snprintf(buf,sizeof(buf),"%s  [S]",ss.snd?"ON":"OFF"); di(y,"SOUND",buf); y+=stp;
+    snprintf(buf,sizeof(buf),"%s  [O]",ss.ps?"ON":"OFF"); di(y,"PAUSE ON SCORE",buf); y+=stp;
     int bw=std::min(200,cw/2), bh=std::max(28,ch/18), bx=(cw-bw)/2, by=ch-bh-ch/15;
     Btn bb2={{bx,by,bx+bw,by+bh},"BACK TO MENU"};
     drwBtn(dc,bb2,hoverBtn==0,cw);
     HFONT bf=CreateFontA(std::max(10,ch/40),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,ANSI_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,FIXED_PITCH,"Courier New");
     SelectObject(dc,bf); SetTextColor(dc,RGB(80,80,80));
     RECT rf={cw*6/10,ch/5,cw-20,ch*4/5};
-    DrawTextA(dc,"Press [1-6] Colors/Score/Timer\n\n[B]Ball Speed\n[P]Paddle Size\n[A]AI Difficulty\n[K]Paddle Speed\n[S]Sound On/Off",-1,&rf,DT_RIGHT|DT_VCENTER|DT_WORDBREAK);
+    DrawTextA(dc,"Press [1-6] Colors/Score/Timer\n\n[B]Ball Speed\n[P]Paddle Size\n[A]AI Difficulty\n[K]Paddle Speed\n[S]Sound On/Off\n[O]Pause On Score",-1,&rf,DT_RIGHT|DT_VCENTER|DT_WORDBREAK);
     DeleteObject(bf);
 }
 
@@ -278,6 +313,7 @@ void hsk(int vk) {
     else if(vk=='A'||vk=='a'){ss.ai=ss.ai>=10?1:ss.ai+1;ch=true;}
     else if(vk=='K'||vk=='k'){ss.pspd=ss.pspd>=12?3:ss.pspd+1;ch=true;}
     else if(vk=='S'||vk=='s'){ss.snd=!ss.snd;ch=true;}
+    else if(vk=='O'||vk=='o'){ss.ps=!ss.ps;ch=true;}
     if(ch) InvalidateRect(hw,NULL,TRUE);
 }
 
@@ -286,7 +322,16 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
         k[wp&0xFF]=true;
         if(st==SETTINGS){hsk((int)wp);break;}
-        if(wp=='P'||wp=='p'){if(st==PLAY)st=PAUSED;else if(st==PAUSED)st=PLAY;InvalidateRect(h,NULL,TRUE);}
+        if(wp=='P'||wp=='p'){
+            if(st==PLAY) { st=PAUSED; }
+            else if(st==PAUSED) {
+                if(!pointMsg.empty()) {
+                    rblFrom(pendingDir); pointMsg=""; pendingDir=0;
+                }
+                st=PLAY;
+            }
+            InvalidateRect(h,NULL,TRUE);
+        }
         if(wp==VK_ESCAPE){
             if(st==SETTINGS){st=MENU;InvalidateRect(h,NULL,TRUE);}
             else if(st==PLAY||st==PAUSED){st=MENU;if(t1){KillTimer(h,t1);t1=0;}InvalidateRect(h,NULL,TRUE);}
@@ -302,7 +347,6 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         break;
     case WM_TIMER:
         if(wp==1&&st==PLAY){trem--;if(trem<=0){trem=0;KillTimer(h,t1);t1=0;st=GAMEOVER;swin();}}
-        if(wp==2){upd();}
         break;
     case WM_MOUSEMOVE:{
         int nx=GET_X_LPARAM(lp), ny=GET_Y_LPARAM(lp);
@@ -361,7 +405,7 @@ void save(){
     std::ofstream f("pong_settings.ini"); if(!f)return;
     f<<ss.p1n<<std::endl<<ss.p2n<<std::endl;
     f<<ss.p1c<<std::endl<<ss.p2c<<std::endl<<ss.bc<<std::endl<<ss.sc<<std::endl;
-    f<<ss.bg<<std::endl<<ss.sl<<std::endl<<ss.tl<<std::endl<<ss.bspd<<std::endl<<ss.psz<<std::endl<<ss.ai<<std::endl<<ss.pspd<<std::endl<<ss.snd<<std::endl;
+    f<<ss.bg<<std::endl<<ss.sl<<std::endl<<ss.tl<<std::endl<<ss.bspd<<std::endl<<ss.psz<<std::endl<<ss.ai<<std::endl<<ss.pspd<<std::endl<<ss.snd<<std::endl<<ss.ps<<std::endl;
 }
 void load(){
     std::ifstream f("pong_settings.ini"); if(!f)return;
@@ -371,7 +415,7 @@ void load(){
     ss.p2c=std::min(NC-1,std::max(0,ss.p2c));
     ss.bc=std::min(NC-1,std::max(0,ss.bc));
     ss.sc=std::min(NC-1,std::max(0,ss.sc));
-    f>>ss.bg>>ss.sl>>ss.tl>>ss.bspd>>ss.psz>>ss.ai>>ss.pspd>>ss.snd;
+    f>>ss.bg>>ss.sl>>ss.tl>>ss.bspd>>ss.psz>>ss.ai>>ss.pspd>>ss.snd>>ss.ps;
 }
 
 int WINAPI WinMain(HINSTANCE hi, HINSTANCE, LPSTR, int ns) {
@@ -383,7 +427,42 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE, LPSTR, int ns) {
     hw=CreateWindowExA(0,"PongWindow","PONG",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,wr.right-wr.left,wr.bottom-wr.top,NULL,NULL,hi,NULL);
     if(!hw)return 0;
     ShowWindow(hw,ns); UpdateWindow(hw);
-    SetTimer(hw,2,16,NULL);
-    MSG msg={}; while(GetMessage(&msg,NULL,0,0)){TranslateMessage(&msg);DispatchMessage(&msg);}
+    // Increase Windows timer resolution for better Sleep() precision
+    timeBeginPeriod(1);
+    LARGE_INTEGER freq; QueryPerformanceFrequency(&freq);
+    double dT = 1.0 / 60.0; // target 60 updates per second = 16.666ms
+    LARGE_INTEGER then; QueryPerformanceCounter(&then);
+    double accumulator = 0.0;
+    MSG msg={};
+    bool running = true;
+    while(running) {
+        // Process all pending messages (non-blocking)
+        while(PeekMessageA(&msg,NULL,0,0,PM_REMOVE)) {
+            if(msg.message==WM_QUIT){running=false;break;}
+            TranslateMessage(&msg); DispatchMessage(&msg);
+        }
+        if(!running) break;
+        // Frame timing with high-resolution performance counter
+        LARGE_INTEGER now; QueryPerformanceCounter(&now);
+        double frameTime = (double)(now.QuadPart - then.QuadPart) / (double)freq.QuadPart;
+        then = now;
+        // Cap frame time to prevent spiral of death if paused / lag spike
+        if(frameTime > 0.05) frameTime = 0.05;
+        accumulator += frameTime;
+        while(accumulator >= dT) {
+            upd();
+            accumulator -= dT;
+        }
+        if(st==PLAY||st==PAUSED) {
+            InvalidateRect(hw,NULL,TRUE);
+            UpdateWindow(hw);
+        }
+        // Only sleep if we have significant time remaining
+        if(accumulator < 0.003) {
+            double sleepMs = (dT - accumulator) * 1000.0 - 1.0;
+            if(sleepMs > 2.0) Sleep((DWORD)sleepMs);
+        }
+    }
+    timeEndPeriod(1);
     save(); return 0;
 }

@@ -324,6 +324,15 @@
         </select>
       </div>
 
+      <!-- Pause on Score -->
+      <div class="setting-item setting-full">
+        <label>Pause on Score</label>
+        <select id="sPauseOnScore">
+          <option value="off" selected>Off</option>
+          <option value="on">On</option>
+        </select>
+      </div>
+
       <!-- full-width extra controls -->
       <div class="setting-item setting-full">
         <label>Paddle Speed</label>
@@ -374,6 +383,7 @@
     aiDifficulty: 5,
     paddleSpeed: 8,
     sound: 'on',
+    pauseOnScore: false,
   };
 
   const S = { ...defaults };
@@ -385,6 +395,8 @@
   let paused     = false;
   let gameOver   = false;
   let roundActive = false;
+  let pointMsg   = '';
+  let pendingDir = 0;
 
   // ---------- paddle constants ----------
   const PADDLE_W = 12;
@@ -457,6 +469,7 @@
     S.aiDifficulty   = parseInt($('sAIDifficulty').value);
     S.paddleSpeed    = parseInt($('sPaddleSpeed').value);
     S.sound          = $('sSound').value;
+    S.pauseOnScore   = $('sPauseOnScore').value === 'on';
     applySettings();
 
     $('sBgBrightnessVal').textContent = S.bgBrightness;
@@ -481,6 +494,7 @@
     $('sAIDifficulty').value  = S.aiDifficulty;
     $('sPaddleSpeed').value   = S.paddleSpeed;
     $('sSound').value         = S.sound;
+    $('sPauseOnScore').value  = S.pauseOnScore ? 'on' : 'off';
     loadSettingsFromUI();
   }
 
@@ -521,6 +535,30 @@
     };
   }
 
+  function resetBallFrom(dir) {
+    // Spawn ball at the scored-on player's paddle heading toward the scorer
+    // dir=1  -> spawn at left paddle (heading right)
+    // dir=-1 -> spawn at right paddle (heading left)
+    const angle = rand(-0.4, 0.4);
+    if (dir > 0) {
+      ball = {
+        x: leftPaddle.x + leftPaddle.w + 1,
+        y: leftPaddle.y + leftPaddle.h / 2 - BALL_SIZE / 2,
+        s: BALL_SIZE,
+        vx: Math.cos(angle) * ballSpeed * dir,
+        vy: Math.sin(angle) * ballSpeed,
+      };
+    } else {
+      ball = {
+        x: rightPaddle.x - BALL_SIZE - 1,
+        y: rightPaddle.y + rightPaddle.h / 2 - BALL_SIZE / 2,
+        s: BALL_SIZE,
+        vx: Math.cos(angle) * ballSpeed * dir,
+        vy: Math.sin(angle) * ballSpeed,
+      };
+    }
+  }
+
   function resetGame() {
     stopTimer();
     leftScore  = 0;
@@ -528,6 +566,8 @@
     gameOver   = false;
     paused     = false;
     roundActive = false;
+    pointMsg   = '';
+    pendingDir = 0;
     applySettings();
     resetPaddles();
     resetBall(1);
@@ -579,7 +619,17 @@
   document.addEventListener('keydown', e => {
     keys[e.key] = true;
     if (e.key === 'p' || e.key === 'P') {
-      if (!gameOver) paused = !paused;
+      if (!gameOver) {
+        if (pointMsg) {
+          // Resuming from "Point X" pause: reset ball and continue
+          resetBallFrom(pendingDir);
+          pointMsg = '';
+          pendingDir = 0;
+          paused = false;
+        } else {
+          paused = !paused;
+        }
+      }
     }
     if (e.key === ' ') e.preventDefault();
     if (e.key === 'Escape') showMainMenu();
@@ -663,14 +713,34 @@
       playPaddleHit();
     }
 
-    if (ball.x + ball.s < 0) { rightScore++; playScore(); checkWin(); if (!gameOver) resetBall(-1); }
-    if (ball.x > GAME_W) { leftScore++;  playScore(); checkWin(); if (!gameOver) resetBall(1);  }
+    if (ball.x + ball.s < 0) {
+      rightScore++; playScore();
+      if (S.pauseOnScore && rightScore < S.scoreLimit) {
+        pointMsg = 'POINT ' + (twoPlayer ? S.player2Name : 'COMPUTER');
+        pendingDir = -1;
+        paused = true;
+      }
+      checkWin();
+      if (!gameOver && !pointMsg) resetBallFrom(-1);
+    }
+    if (ball.x > GAME_W) {
+      leftScore++; playScore();
+      if (S.pauseOnScore && leftScore < S.scoreLimit) {
+        pointMsg = 'POINT ' + S.player1Name;
+        pendingDir = 1;
+        paused = true;
+      }
+      checkWin();
+      if (!gameOver && !pointMsg) resetBallFrom(1);
+    }
   }
 
   function checkWin() {
     if (leftScore >= S.scoreLimit || rightScore >= S.scoreLimit) {
       gameOver = true;
       stopTimer();
+      pointMsg = '';
+      pendingDir = 0;
       showWinner(false);
     }
   }
@@ -758,12 +828,22 @@
     ctx.fillText(twoPlayer ? S.player2Name : 'CPU', GAME_W / 2 + 60, 62);
     ctx.globalAlpha = 1;
 
-    // pause indicator
+    // pause overlay — show point message or generic pause
     if (paused && !gameOver && roundActive) {
-      ctx.font      = '20px "Courier New", monospace';
-      ctx.fillStyle = 'rgba(255,255,255,0.3)';
-      ctx.textAlign = 'center';
-      ctx.fillText('— PAUSED —', GAME_W / 2, GAME_H / 2 - 20);
+      if (pointMsg) {
+        ctx.font      = '24px "Courier New", monospace';
+        ctx.fillStyle = 'rgb(255,255,100)';
+        ctx.textAlign = 'center';
+        ctx.fillText(pointMsg, GAME_W / 2, GAME_H / 2 - 30);
+        ctx.font      = '14px "Courier New", monospace';
+        ctx.fillStyle = 'rgb(200,200,200)';
+        ctx.fillText('PRESS P TO RESUME', GAME_W / 2, GAME_H / 2 + 10);
+      } else {
+        ctx.font      = '20px "Courier New", monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.textAlign = 'center';
+        ctx.fillText('— PAUSED —', GAME_W / 2, GAME_H / 2 - 20);
+      }
     }
 
     // timer on canvas
@@ -794,6 +874,8 @@
     paused = true;
     roundActive = false;
     gameOver = false;
+    pointMsg = '';
+    pendingDir = 0;
     mainMenu.querySelector('h1').textContent = 'PONG';
     mainMenu.querySelector('.subtitle').textContent = 'Original Arcade Clone';
     mainMenu.querySelector('.controls').innerHTML =
